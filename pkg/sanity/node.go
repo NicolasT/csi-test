@@ -346,13 +346,34 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 	})
 
 	Describe("NodePublishVolume", func() {
+		var req *csi.NodePublishVolumeRequest
+
+		BeforeEach(func() {
+			stagingTargetPath := ""
+			if nodeStageSupported {
+				stagingTargetPath = sc.StagingPath
+			}
+
+			req = &csi.NodePublishVolumeRequest{
+				VolumeId:          sc.Config.IDGen.GenerateUniqueValidVolumeID(),
+				StagingTargetPath: stagingTargetPath,
+				TargetPath:        sc.TargetPath + "/target",
+				VolumeCapability:  TestVolumeCapabilityWithAccessType(sc, csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER),
+				Readonly:          false,
+				Secrets:           sc.Secrets.NodePublishVolumeSecret,
+			}
+		})
+
+		JustAfterEach(func() {
+			if CurrentGinkgoTestDescription().Failed {
+				fmt.Fprintf(GinkgoWriter, "Request was %v\n", req)
+			}
+		})
+
 		It("should fail when no volume id is provided", func() {
-			_, err := c.NodePublishVolume(
-				context.Background(),
-				&csi.NodePublishVolumeRequest{
-					Secrets: sc.Secrets.NodePublishVolumeSecret,
-				},
-			)
+			req.VolumeId = ""
+
+			_, err := c.NodePublishVolume(context.Background(), req)
 			Expect(err).To(HaveOccurred())
 
 			serverError, ok := status.FromError(err)
@@ -361,13 +382,9 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 		})
 
 		It("should fail when no target path is provided", func() {
-			_, err := c.NodePublishVolume(
-				context.Background(),
-				&csi.NodePublishVolumeRequest{
-					VolumeId: sc.Config.IDGen.GenerateUniqueValidVolumeID(),
-					Secrets:  sc.Secrets.NodePublishVolumeSecret,
-				},
-			)
+			req.TargetPath = ""
+
+			_, err := c.NodePublishVolume(context.Background(), req)
 			Expect(err).To(HaveOccurred())
 
 			serverError, ok := status.FromError(err)
@@ -375,21 +392,41 @@ var _ = DescribeSanity("Node Service", func(sc *TestContext) {
 			Expect(serverError.Code()).To(Equal(codes.InvalidArgument))
 		})
 
+		It("should fail when no staging target path is provided", func() {
+			if !nodeStageSupported {
+				Skip("STAGE_UNSTAGE_VOLUME not supported")
+			}
+
+			req.StagingTargetPath = ""
+
+			_, err := c.NodePublishVolume(context.Background(), req)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.FailedPrecondition))
+		})
+
 		It("should fail when no volume capability is provided", func() {
-			_, err := c.NodePublishVolume(
-				context.Background(),
-				&csi.NodePublishVolumeRequest{
-					VolumeId:         sc.Config.IDGen.GenerateUniqueValidVolumeID(),
-					VolumeCapability: nil,
-					TargetPath:       sc.TargetPath + "/target",
-					Secrets:          sc.Secrets.NodePublishVolumeSecret,
-				},
-			)
+			req.VolumeCapability = nil
+
+			_, err := c.NodePublishVolume(context.Background(), req)
 			Expect(err).To(HaveOccurred())
 
 			serverError, ok := status.FromError(err)
 			Expect(ok).To(BeTrue())
 			Expect(serverError.Code()).To(Equal(codes.InvalidArgument))
+		})
+
+		It("should fail when the volume is missing", func() {
+			req.VolumeId = sc.Config.IDGen.GenerateUniqueValidVolumeID()
+
+			_, err := c.NodePublishVolume(context.Background(), req)
+			Expect(err).To(HaveOccurred())
+
+			serverError, ok := status.FromError(err)
+			Expect(ok).To(BeTrue())
+			Expect(serverError.Code()).To(Equal(codes.NotFound))
 		})
 	})
 
